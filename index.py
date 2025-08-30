@@ -12,10 +12,10 @@ app = Flask(__name__)
 
 _sym_db = _symbol_database.Default()
 
+# ==================== Protobuf setup ====================
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
     b'\n\ndata.proto\"\xbb\x01\n\x04\x44\x61ta\x12\x0f\n\x07\x66ield_2\x18\x02 \x01(\x05\x12\x1e\n\x07\x66ield_5\x18\x05 \x01(\x0b\x32\r.EmptyMessage\x12\x1e\n\x07\x66ield_6\x18\x06 \x01(\x0b\x32\r.EmptyMessage\x12\x0f\n\x07\x66ield_8\x18\x08 \x01(\t\x12\x0f\n\x07\x66ield_9\x18\t \x01(\x05\x12\x1f\n\x08\x66ield_11\x18\x0b \x01(\x0b\x32\r.EmptyMessage\x12\x1f\n\x08\x66ield_12\x18\x0c \x01(\x0b\x32\r.EmptyMessage\"\x0e\n\x0c\x45mptyMessageb\x06proto3'
 )
-
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'data_pb2', _globals)
@@ -23,26 +23,37 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'data_pb2', _globals)
 Data = _sym_db.GetSymbol('Data')
 EmptyMessage = _sym_db.GetSymbol('EmptyMessage')
 
+# ==================== AES ====================
 key = bytes([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56])
 iv = bytes([54, 111, 121, 90, 68, 114, 50, 50, 69, 51, 121, 99, 104, 106, 77, 37])
 
+# ==================== SERVER URLS ====================
 SERVER_URLS = {
     "us": "https://client.us.freefiremobile.com/UpdateSocialBasicInfo",
-    "ind": "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo"
+    "ind": "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo",
+    "me": "https://clientbp.ggblueshark.com/UpdateSocialBasicInfo"
 }
 
+# ==================== Flask Route ====================
 @app.route('/update_bio/<server>/<token>/<path:bio>', methods=['GET'])
 def update_bio(server, token, bio):
     bio = urllib.parse.unquote(bio)
 
     if server not in SERVER_URLS:
-        return Response(json.dumps({'error': 'Invalid server. Use "us" or "ind".'}, ensure_ascii=False), 
-                        content_type='application/json; charset=utf-8', status=400)
+        return Response(
+            json.dumps({'error': 'Invalid server. Use "us", "ind" or "me".'}, ensure_ascii=False), 
+            content_type='application/json; charset=utf-8', 
+            status=400
+        )
 
     if len(bio) >= 180:
-        return Response(json.dumps({'error': 'Bio length must be less than 180 characters'}, ensure_ascii=False), 
-                        content_type='application/json; charset=utf-8', status=400)
+        return Response(
+            json.dumps({'error': 'Bio length must be less than 180 characters'}, ensure_ascii=False), 
+            content_type='application/json; charset=utf-8', 
+            status=400
+        )
 
+    # ==================== Build Protobuf message ====================
     data_msg = Data()
     data_msg.field_2 = 17
     data_msg.field_5.CopyFrom(EmptyMessage())
@@ -52,11 +63,13 @@ def update_bio(server, token, bio):
     data_msg.field_11.CopyFrom(EmptyMessage())
     data_msg.field_12.CopyFrom(EmptyMessage())
 
+    # ==================== AES Encryption ====================
     data_bytes = data_msg.SerializeToString()
     padded_data = pad(data_bytes, AES.block_size)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     encrypted_data = cipher.encrypt(padded_data)
 
+    # ==================== POST Request ====================
     url = SERVER_URLS[server]
     headers = {
         'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)',
@@ -69,14 +82,29 @@ def update_bio(server, token, bio):
         'Content-Type': 'application/octet-stream',
     }
 
-    resp = requests.post(url, headers=headers, data=encrypted_data)
+    try:
+        resp = requests.post(url, headers=headers, data=encrypted_data, timeout=15)
+        if resp.status_code == 200:
+            response_data = {
+                'message': '✅ تم تغيير البايو',
+                'bio_new': bio,
+                'developer': 'BNGX',
+                'server': server
+            }
+            return Response(json.dumps(response_data, ensure_ascii=False), content_type='application/json; charset=utf-8')
+        else:
+            return Response(
+                json.dumps({'error': f'Failed to update bio. HTTP {resp.status_code}'}, ensure_ascii=False), 
+                content_type='application/json; charset=utf-8', 
+                status=500
+            )
+    except Exception as e:
+        return Response(
+            json.dumps({'error': f'Exception occurred: {e}'}, ensure_ascii=False), 
+            content_type='application/json; charset=utf-8', 
+            status=500
+        )
 
-    response_data = {
-        'message': 'تم تغيير البايو',
-        'bio_new': bio,
-        'developer': 'BNGX',
-        'server': server
-    }
-
-    json_str = json.dumps(response_data, ensure_ascii=False)
-    return Response(json_str, content_type='application/json; charset=utf-8')
+# ==================== Run Flask ====================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
